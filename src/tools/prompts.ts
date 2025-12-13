@@ -47,7 +47,9 @@ export function loadPromptFile(filePath: string): Prompt {
     const lines = frontmatterYaml.split('\n');
 
     for (const line of lines) {
-      const match = line.match(/^([^:]+):\s*(.+)$/);
+      const normalizedLine = line.replace(/\r/g, '');
+      if (!normalizedLine.trim()) continue;
+      const match = normalizedLine.match(/^([^:]+):\s*(.+)$/);
       if (match) {
         const [, key, value] = match;
         // Remove quotes if present

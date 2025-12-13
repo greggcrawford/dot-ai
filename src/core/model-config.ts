@@ -10,6 +10,7 @@ export const CURRENT_MODELS = {
   anthropic_opus: 'claude-opus-4-5-20251101',
   anthropic_haiku: 'claude-haiku-4-5-20251001',
   openai: 'gpt-5.1-codex',
+  azure_openai: 'gpt-4o-mini',
   google: 'gemini-3-pro-preview',
   kimi: 'kimi-k2-0905-preview', // PRD #237: Moonshot AI Kimi K2 - standard model with 256K context
   kimi_thinking: 'kimi-k2-thinking', // PRD #237: Moonshot AI Kimi K2 - extended thinking variant

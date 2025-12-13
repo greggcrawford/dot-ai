@@ -15,6 +15,11 @@ import {
 import { VercelProvider } from './providers/vercel-provider';
 import { NoOpAIProvider } from './providers/noop-provider';
 import { CURRENT_MODELS } from './model-config';
+import { AzureOpenAIProvider } from './providers/azure-openai-provider';
+import {
+  AdaptiveRateLimiter,
+  AdaptiveRateLimiterOptions
+} from './providers/adaptive-rate-limiter';
 
 /**
  * Provider environment variable mappings
@@ -25,6 +30,7 @@ const PROVIDER_ENV_KEYS: Record<string, string> = {
   anthropic_opus: 'ANTHROPIC_API_KEY', // Uses same API key as regular Anthropic
   anthropic_haiku: 'ANTHROPIC_API_KEY', // Uses same API key as regular Anthropic
   openai: 'OPENAI_API_KEY',
+  azure_openai: 'AZURE_OPENAI_API_KEY',
   google: 'GOOGLE_API_KEY',
   kimi: 'MOONSHOT_API_KEY', // PRD #237: Moonshot AI Kimi K2
   kimi_thinking: 'MOONSHOT_API_KEY', // PRD #237: Uses same API key as regular Kimi
@@ -107,6 +113,15 @@ export class AIProviderFactory {
         `Falling back to NoOpProvider.\n`
       );
       return new NoOpAIProvider();
+    }
+
+    if (providerType === 'azure_openai') {
+      const azureProvider = this.createAzureProvider();
+      if (!azureProvider) {
+        return new NoOpAIProvider();
+      }
+      const limiter = new AdaptiveRateLimiter(this.getLimiterOptionsFromEnv());
+      return this.wrapWithLimiter(azureProvider, limiter);
     }
 
     // Get API key for the provider
@@ -204,6 +219,71 @@ export class AIProviderFactory {
    */
   static isProviderImplemented(provider: string): boolean {
     return IMPLEMENTED_PROVIDERS.includes(provider as ImplementedProvider);
+  }
+
+  private static createAzureProvider(): AIProvider | null {
+    const apiKey = process.env.AZURE_OPENAI_API_KEY;
+    const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
+    const apiVersion = process.env.AZURE_OPENAI_API_VERSION;
+    const deployment = process.env.AZURE_OPENAI_DEPLOYMENT;
+    const embeddingDeployment = process.env.AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT;
+    const model = process.env.AI_MODEL;
+
+    const missing: string[] = [];
+    if (!apiKey) missing.push('AZURE_OPENAI_API_KEY');
+    if (!endpoint) missing.push('AZURE_OPENAI_ENDPOINT');
+    if (!apiVersion) missing.push('AZURE_OPENAI_API_VERSION');
+    if (!deployment) missing.push('AZURE_OPENAI_DEPLOYMENT');
+
+    if (missing.length > 0) {
+      process.stderr.write(
+        `ERROR: Missing Azure OpenAI configuration: ${missing.join(', ')}. Falling back to NoOpProvider.\n`
+      );
+      return null;
+    }
+
+    return new AzureOpenAIProvider({
+      apiKey: apiKey!,
+      endpoint: endpoint!,
+      apiVersion: apiVersion!,
+      deployment: deployment!,
+      embeddingDeployment,
+      model
+    });
+  }
+
+  private static getLimiterOptionsFromEnv(): AdaptiveRateLimiterOptions {
+    return {
+      minRps: this.parseNumberEnv('AI_RATE_LIMIT_MIN_RPS', 0.5),
+      maxRps: this.parseNumberEnv('AI_RATE_LIMIT_MAX_RPS', 5),
+      initialRps: this.parseNumberEnv('AI_RATE_LIMIT_INITIAL_RPS', 1),
+      burstCapacity: this.parseNumberEnv('AI_RATE_LIMIT_BURST', 5),
+      backoffMultiplier: this.parseNumberEnv('AI_RATE_LIMIT_BACKOFF_MULTIPLIER', 0.5),
+      recoveryStep: this.parseNumberEnv('AI_RATE_LIMIT_RECOVERY_STEP', 0.25),
+      successesForRecovery: this.parseNumberEnv('AI_RATE_LIMIT_SUCCESSES_FOR_RECOVERY', 30),
+      minBackoffMs: this.parseNumberEnv('AI_RATE_LIMIT_MIN_BACKOFF_MS', 1_000),
+      maxBackoffMs: this.parseNumberEnv('AI_RATE_LIMIT_MAX_BACKOFF_MS', 60_000)
+    };
+  }
+
+  private static parseNumberEnv(name: string, defaultValue: number): number {
+    const raw = process.env[name];
+    if (!raw) return defaultValue;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : defaultValue;
+  }
+
+  private static wrapWithLimiter(provider: AIProvider, limiter: AdaptiveRateLimiter): AIProvider {
+    return {
+      getProviderType: () => provider.getProviderType(),
+      getDefaultModel: () => provider.getDefaultModel(),
+      getModelName: () => provider.getModelName(),
+      isInitialized: () => provider.isInitialized(),
+      sendMessage: (message, operation, evaluationContext) =>
+        limiter.schedule(() => provider.sendMessage(message, operation, evaluationContext)),
+      toolLoop: (config) =>
+        limiter.schedule(() => provider.toolLoop(config))
+    };
   }
 }
 
