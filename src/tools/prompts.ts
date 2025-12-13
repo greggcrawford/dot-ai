@@ -31,7 +31,9 @@ export function loadPromptFile(filePath: string): Prompt {
     const content = fs.readFileSync(filePath, 'utf8');
 
     // Parse YAML frontmatter
-    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    const frontmatterMatch = content.match(
+      /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/
+    );
     if (!frontmatterMatch) {
       throw new Error(
         `Invalid prompt file format: missing YAML frontmatter in ${filePath}`
