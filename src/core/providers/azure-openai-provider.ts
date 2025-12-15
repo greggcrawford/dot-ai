@@ -154,9 +154,19 @@ export class AzureOpenAIProvider implements AIProvider {
   }
 
   private async callAzure(url: string, body: any): Promise<AzureChatResponse> {
+    const requestId = `azure-req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    this.logger.info('Making Azure OpenAI API request', {
+      requestId,
+      timestamp: new Date().toISOString(),
+      url: url.split('?')[0]
+    });
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'api-key': this.apiKey
+      'api-key': this.apiKey,
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'x-request-id': requestId
     };
 
     const response = await fetch(url, {
