@@ -8,13 +8,14 @@
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { google } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
+import { createAzure } from '@ai-sdk/azure';
 import { embed } from 'ai';
 import { withAITracing } from './tracing';
 
 /**
  * Supported embedding providers - single source of truth
  */
-export const EMBEDDING_PROVIDERS = ['openai', 'google', 'amazon_bedrock'] as const;
+export const EMBEDDING_PROVIDERS = ['openai', 'google', 'amazon_bedrock', 'azure_openai'] as const;
 export type EmbeddingProviderType = typeof EMBEDDING_PROVIDERS[number];
 
 export interface EmbeddingConfig {
@@ -22,6 +23,8 @@ export interface EmbeddingConfig {
   apiKey?: string;
   model?: string;
   dimensions?: number;
+  azureOpenAIEndpoint?: string;
+  azureOpenAIApiVersion?: string;
 }
 
 export interface EmbeddingProvider {
@@ -34,7 +37,7 @@ export interface EmbeddingProvider {
 
 /**
  * Unified Vercel AI SDK Embedding Provider
- * Supports OpenAI, Google, and Amazon Bedrock through Vercel AI SDK
+ * Supports OpenAI, Google, Amazon Bedrock, and Azure OpenAI through Vercel AI SDK
  */
 export class VercelEmbeddingProvider implements EmbeddingProvider {
   private providerType: EmbeddingProviderType;
@@ -53,6 +56,11 @@ export class VercelEmbeddingProvider implements EmbeddingProvider {
       case 'openai':
         this.apiKey = config.apiKey || process.env.CUSTOM_EMBEDDINGS_API_KEY || process.env.OPENAI_API_KEY || '';
         this.model = config.model || process.env.EMBEDDINGS_MODEL || 'text-embedding-3-small';
+        this.dimensions = config.dimensions || (process.env.EMBEDDINGS_DIMENSIONS ? parseInt(process.env.EMBEDDINGS_DIMENSIONS, 10) : 1536);
+        break;
+      case 'azure_openai':
+        this.apiKey = config.apiKey || process.env.AZURE_OPENAI_API_KEY || '';
+        this.model = config.model || process.env.AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT || process.env.EMBEDDINGS_MODEL || 'text-embedding-ada';
         this.dimensions = config.dimensions || (process.env.EMBEDDINGS_DIMENSIONS ? parseInt(process.env.EMBEDDINGS_DIMENSIONS, 10) : 1536);
         break;
       case 'google':
@@ -83,6 +91,15 @@ export class VercelEmbeddingProvider implements EmbeddingProvider {
             ...(baseURL && { baseURL })
           });
           this.modelInstance = openai.textEmbedding(this.model);
+          break;
+        }
+        case 'azure_openai': {
+          const resourceName = process.env.AZURE_OPENAI_ENDPOINT?.replace('https://', '').split('.')[0] || '';
+          const azure = createAzure({
+            resourceName: resourceName,
+            apiKey: this.apiKey
+          });
+          this.modelInstance = azure.textEmbeddingModel(this.model);
           break;
         }
         case 'google':
@@ -346,6 +363,7 @@ export class EmbeddingService {
     const requestedProvider = process.env.EMBEDDINGS_PROVIDER || 'openai';
     const keyMap = {
       'openai': 'OPENAI_API_KEY',
+      'azure_openai': 'AZURE_OPENAI_API_KEY',
       'google': 'GOOGLE_API_KEY',
       'amazon_bedrock': 'AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION)'
     };
