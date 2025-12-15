@@ -102,11 +102,15 @@ export class AzureOpenAIProvider implements AIProvider {
       async () => {
         const url = `${this.endpoint}/openai/deployments/${this.deployment}/chat/completions?api-version=${this.apiVersion}`;
 
+        // Add hidden timestamp to prevent Azure from deduplicating retry requests
+        // This ensures each retry is treated as a unique request
+        const uniqueMessage = `${message}\n\n<!-- Request timestamp: ${Date.now()} -->`;
+        
         const body = {
           messages: [
             {
               role: 'user',
-              content: message
+              content: uniqueMessage
             }
           ],
           temperature: 0.2
