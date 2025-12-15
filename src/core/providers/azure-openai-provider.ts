@@ -8,6 +8,7 @@ import { RateLimitError } from './adaptive-rate-limiter';
 import { withAITracing } from '../tracing/ai-tracing';
 import { ConsoleLogger, Logger } from '../error-handling';
 import { CURRENT_MODELS } from '../model-config';
+import * as https from 'https';
 
 interface AzureProviderConfig {
   apiKey: string;
@@ -169,10 +170,19 @@ export class AzureOpenAIProvider implements AIProvider {
       'x-request-id': requestId
     };
 
+    // Force fresh TCP connection for each request to prevent Azure from tracking
+    // rate limits per connection. This mimics behavior of separate curl/script calls.
+    const agent = new https.Agent({
+      keepAlive: false,
+      maxSockets: 1
+    });
+
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      // @ts-ignore - agent is valid but TypeScript doesn't recognize it in fetch options
+      agent
     });
 
     if (response.status === 429) {
