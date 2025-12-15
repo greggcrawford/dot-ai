@@ -20,6 +20,7 @@ import {
   AdaptiveRateLimiter,
   AdaptiveRateLimiterOptions
 } from './providers/adaptive-rate-limiter';
+import { FallbackProvider } from './providers/fallback-provider';
 
 /**
  * Provider environment variable mappings
@@ -120,6 +121,29 @@ export class AIProviderFactory {
       if (!azureProvider) {
         return new NoOpAIProvider();
       }
+      
+      // Check if AWS Bedrock is available as fallback
+      const hasBedrockCredentials = process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_REGION;
+      
+      if (hasBedrockCredentials) {
+        // Create Bedrock fallback provider
+        const bedrockProvider = this.create({
+          provider: 'amazon_bedrock',
+          apiKey: 'bedrock-uses-aws-credentials',
+          model: process.env.AWS_BEDROCK_MODEL || 'anthropic.claude-3-5-sonnet-20240620-v1:0'
+        });
+        
+        // Wrap Azure with Bedrock fallback
+        const fallbackProvider = new FallbackProvider({
+          primaryProvider: azureProvider,
+          fallbackProvider: bedrockProvider
+        });
+        
+        const limiter = new AdaptiveRateLimiter(this.getLimiterOptionsFromEnv());
+        return this.wrapWithLimiter(fallbackProvider, limiter);
+      }
+      
+      // No fallback available, use Azure with rate limiter only
       const limiter = new AdaptiveRateLimiter(this.getLimiterOptionsFromEnv());
       return this.wrapWithLimiter(azureProvider, limiter);
     }
