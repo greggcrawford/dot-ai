@@ -48,6 +48,10 @@ export interface AdaptiveRateLimiterOptions {
    */
   maxBackoffMs?: number;
   /**
+   * Maximum number of retries for rate-limited requests before giving up.
+   */
+  maxRetries?: number;
+  /**
    * Logger instance; defaults to ConsoleLogger with component AdaptiveRateLimiter.
    */
   logger?: Logger;
@@ -57,6 +61,7 @@ interface QueueEntry<T> {
   task: () => Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (reason?: any) => void;
+  retryCount: number;
 }
 
 const DEFAULT_OPTIONS: Required<Omit<AdaptiveRateLimiterOptions, 'logger'>> = {
@@ -68,7 +73,8 @@ const DEFAULT_OPTIONS: Required<Omit<AdaptiveRateLimiterOptions, 'logger'>> = {
   recoveryStep: 0.25,
   successesForRecovery: 30,
   minBackoffMs: 1_000,
-  maxBackoffMs: 60_000
+  maxBackoffMs: 60_000,
+  maxRetries: 100
 };
 
 export class AdaptiveRateLimiter {
@@ -102,7 +108,7 @@ export class AdaptiveRateLimiter {
    */
   async schedule<T>(task: () => Promise<T>): Promise<T> {
     return await new Promise<T>((resolve, reject) => {
-      const entry: QueueEntry<T> = { task, resolve, reject };
+      const entry: QueueEntry<T> = { task, resolve, reject, retryCount: 0 };
       this.enqueue(entry);
     });
   }
@@ -190,6 +196,12 @@ export class AdaptiveRateLimiter {
   }
 
   private executeEntry(entry: QueueEntry<any>): void {
+    if (entry.retryCount > 0) {
+      this.logger.info('Executing retry attempt', {
+        retryCount: entry.retryCount,
+        maxRetries: this.options.maxRetries
+      });
+    }
     entry
       .task()
       .then(result => {
@@ -198,14 +210,37 @@ export class AdaptiveRateLimiter {
       })
       .catch(error => {
         if (error instanceof RateLimitError) {
-          this.onRateLimit(error.retryAfterMs);
-          const retryDelay =
-            error.retryAfterMs ??
-            Math.min(
-              this.currentBackoffMs,
-              this.options.maxBackoffMs
-            );
-          this.enqueue(entry, retryDelay);
+          entry.retryCount += 1;
+          if (entry.retryCount > this.options.maxRetries) {
+            this.logger.error('Max retries exceeded for rate-limited request', error, {
+              retryCount: entry.retryCount,
+              maxRetries: this.options.maxRetries
+            });
+            entry.reject(new Error(`Rate limit exceeded: Max retries (${this.options.maxRetries}) reached. Azure OpenAI quota may be exhausted or rate limits too restrictive.`));
+          } else {
+            this.onRateLimit(error.retryAfterMs);
+            const baseRetryDelay =
+              error.retryAfterMs ??
+              Math.min(
+                this.currentBackoffMs,
+                this.options.maxBackoffMs
+              );
+            
+            // Add progressive multiplier: wait longer with each retry
+            // This helps Azure's rate limit state reset between attempts
+            const retryMultiplier = 1 + (entry.retryCount * 0.5);
+            const retryDelay = Math.min(baseRetryDelay * retryMultiplier, 300000); // Max 5 minutes
+            
+            this.logger.info('Scheduling retry after rate limit', {
+              retryCount: entry.retryCount,
+              maxRetries: this.options.maxRetries,
+              baseRetryDelayMs: baseRetryDelay,
+              retryMultiplier: retryMultiplier,
+              actualRetryDelayMs: retryDelay,
+              willRetryAt: new Date(Date.now() + retryDelay).toISOString()
+            });
+            this.enqueue(entry, retryDelay);
+          }
         } else {
           entry.reject(error);
         }
