@@ -170,6 +170,11 @@ export class AzureOpenAIProvider implements AIProvider {
       const retryAfterMs = retryAfterHeader
         ? parseFloat(retryAfterHeader) * 1000
         : undefined;
+      this.logger.warn('Azure OpenAI rate limit hit', {
+        retryAfterHeader: retryAfterHeader || 'not provided',
+        retryAfterMs: retryAfterMs || 'using backoff strategy',
+        retryAfterSeconds: retryAfterHeader ? parseFloat(retryAfterHeader) : 'N/A'
+      });
       throw new RateLimitError('Azure OpenAI rate limit exceeded', retryAfterMs);
     }
 
